@@ -1,11 +1,9 @@
 import { getServiceClient } from '../../../lib/supabase';
-import { requireApiAuth } from '../../../lib/auth';
 import { isE164 } from '../../../lib/phone';
 import { lineById } from '../../../lib/lines';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
-  if (!requireApiAuth(req, res)) return;
   const { to, body, source = 'manual', line: lineId } = req.body;
   if (!isE164(to)) return res.status(400).json({ error: 'Invalid to (must be E.164)' });
   if (typeof body !== 'string' || body.length === 0 || body.length > 1600) {

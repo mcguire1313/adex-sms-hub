@@ -1,10 +1,8 @@
 import { getServiceClient } from '../../../lib/supabase';
-import { requireApiAuth } from '../../../lib/auth';
 import { LINES, lineForNumber } from '../../../lib/lines';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
-  if (!requireApiAuth(req, res)) return;
   try {
     const supabase = getServiceClient();
     const { data: messages, error } = await supabase

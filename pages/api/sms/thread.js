@@ -1,11 +1,9 @@
 import { getServiceClient } from '../../../lib/supabase';
-import { requireApiAuth } from '../../../lib/auth';
 import { isE164, stripCountry } from '../../../lib/phone';
 import { lineById } from '../../../lib/lines';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
-  if (!requireApiAuth(req, res)) return;
   const { contact, line: lineId } = req.query;
   if (!isE164(contact)) return res.status(400).json({ error: 'Invalid contact (must be E.164)' });
   const line = lineById(lineId);
