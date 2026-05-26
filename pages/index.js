@@ -313,9 +313,12 @@ export default function SMSHub() {
       if (!newMsgs.length) return;
       setThread((prev) => {
         if (!prev) return d;
-        // Drop optimistic rows that have now been confirmed by the server
-        // (match by body + contact + line + roughly recent timestamp).
-        return { ...prev, messages: [...prev.messages, ...newMsgs] };
+        // Dedup by id — defense in depth in case the server ever re-returns a
+        // row we already have (e.g. timestamp-precision bug in `?since=`).
+        const seen = new Set(prev.messages.map((m) => m.id));
+        const fresh = newMsgs.filter((m) => !m.id || !seen.has(m.id));
+        if (!fresh.length) return prev;
+        return { ...prev, messages: [...prev.messages, ...fresh] };
       });
       lastMessageAtRef.current = newMsgs[newMsgs.length - 1].created_at;
       // Also drop any pending optimistic rows that match a real arrival.

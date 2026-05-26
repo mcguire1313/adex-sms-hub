@@ -11,10 +11,17 @@ export default async function handler(req, res) {
 
   // Validate `since` if present: must be ISO-parseable. Bad value -> ignore it
   // and fall back to full-history fetch (preserves the pre-Phase-2 behavior).
+  //
+  // IMPORTANT: do NOT pass `since` through `new Date(...).toISOString()` — JS
+  // Date only has millisecond precision, but Postgres `timestamptz` has
+  // microsecond precision. Truncating "...188341+00" to "...188Z" makes the
+  // SQL `created_at > sinceIso` match the same row on every poll, causing
+  // duplicate messages to accumulate client-side. Validate format, then pass
+  // the original string through verbatim.
   let sinceIso = null;
   if (typeof since === 'string' && since) {
     const d = new Date(since);
-    if (!Number.isNaN(d.getTime())) sinceIso = d.toISOString();
+    if (!Number.isNaN(d.getTime())) sinceIso = since;
   }
 
   try {
