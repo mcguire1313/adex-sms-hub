@@ -360,6 +360,22 @@ export default function SMSHub() {
     return () => clearInterval(i);
   }, [active, visible, pollThread]);
 
+
+  // --------- derived state ----------
+
+  const filtered = convs.filter((c) => {
+    if (tab !== 'all' && c.line_id !== tab) return false;
+    if (unreadOnly && c.unread_count === 0) return false;
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return (
+      (c.contact_name && c.contact_name.toLowerCase().includes(q))
+      || c.contact_number.includes(q)
+      || formatPhone(c.contact_number).includes(q)
+      || (c.last_message && c.last_message.toLowerCase().includes(q))
+    );
+  });
+
   // --------- keyboard shortcuts ----------
 
   useEffect(() => {
@@ -528,20 +544,6 @@ export default function SMSHub() {
     router.replace('/login');
   };
 
-  // --------- derived state ----------
-
-  const filtered = convs.filter((c) => {
-    if (tab !== 'all' && c.line_id !== tab) return false;
-    if (unreadOnly && c.unread_count === 0) return false;
-    if (!search) return true;
-    const q = search.toLowerCase();
-    return (
-      (c.contact_name && c.contact_name.toLowerCase().includes(q))
-      || c.contact_number.includes(q)
-      || formatPhone(c.contact_number).includes(q)
-      || (c.last_message && c.last_message.toLowerCase().includes(q))
-    );
-  });
 
   const totals = LINES.reduce((acc, l) => {
     const lineConvs = convs.filter((c) => c.line_id === l.id);
