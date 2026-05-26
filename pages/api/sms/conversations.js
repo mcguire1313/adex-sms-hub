@@ -99,13 +99,21 @@ export default async function handler(req, res) {
       if (c.do_not_text) optOutMap.set(key, true);
     }
 
+    // A conversation is also considered opted out if the contact's most recent
+    // inbound message is a clear opt-out keyword on its own. Catches anyone
+    // who isn't in `clinicians` but obviously said stop.
+    const STOP_RE = /^\s*(stop|stopall|stop\s*all|unsubscribe|cancel|quit|end|opt\s*-?\s*out|remove\s*me|leave\s*me\s*alone|fuck\s*off|no\s*more)\s*[.!?]?\s*$/i;
+
     const conversations = Array.from(convMap.values())
       .map((conv) => {
         const phoneKey = digitsKey(conv.contact_number);
+        const lastIsStop =
+          conv.last_direction === 'inbound' &&
+          STOP_RE.test(conv.last_message || '');
         return {
           ...conv,
           contact_name: nameMap.get(phoneKey) || null,
-          opted_out: optOutMap.get(phoneKey) === true,
+          opted_out: optOutMap.get(phoneKey) === true || lastIsStop,
         };
       })
       .sort((a, b) => new Date(b.last_message_at) - new Date(a.last_message_at));
