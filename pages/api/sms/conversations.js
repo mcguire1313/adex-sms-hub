@@ -43,29 +43,65 @@ export default async function handler(req, res) {
       if (msg.direction === 'inbound' && !msg.read) conv.unread_count++;
     }
 
-    const cleanNumbers = Array.from(
-      new Set(Array.from(convMap.values()).map((c) => c.contact_number.replace('+1', '').replace('+', '')))
-    );
-    // Pull names + opt-out flags in a single query so we can flag conversations
-    // belonging to numbers that have asked to stop. Either flag puts them in
-    // the "Opted out" folder.
-    const { data: clinicians } = await supabase
-      .from('clinicians')
-      .select('first_name,last_name,phone,email,do_not_text,sms_opt_out')
-      .in('phone', cleanNumbers);
+    // Helper: strip everything but digits, then drop leading 1 so US numbers
+    // collapse to a 10-digit key regardless of source format. Handles all the
+    // shapes we see in `clinicians.phone`: 10-digit "8132157825", E.164
+    // "+18132157825", formatted "(813) 215-7825", dashed "813-215-7825", etc.
+    const digitsKey = (s) => {
+      if (!s) return '';
+      const d = String(s).replace(/\D/g, '');
+      return d.length === 11 && d.startsWith('1') ? d.slice(1) : d;
+    };
+
+    const convPhoneKeys = Array.from(
+      new Set(Array.from(convMap.values()).map((c) => digitsKey(c.contact_number)))
+    ).filter(Boolean);
+
+    // Server-side `phone IN (…)` can't easily match every format the column
+    // holds (10-digit, 14-char formatted, etc.) without a normalizing index.
+    // Instead we pull rows whose digits-only form starts with any of our keys.
+    // For thousands of contacts this would be too broad, so we keep it
+    // bounded: chunk by `in` on the most common 10-digit form and a couple of
+    // common formatted variants per key.
+    const variantsForKey = (k) => {
+      // k is 10 digits like "8132157825"
+      const a = k.slice(0, 3), b = k.slice(3, 6), c = k.slice(6);
+      return [
+        k,                          // 8132157825
+        `+1${k}`,                   // +18132157825
+        `1${k}`,                    // 18132157825
+        `(${a}) ${b}-${c}`,         // (813) 215-7825
+        `${a}-${b}-${c}`,           // 813-215-7825
+        `${a}.${b}.${c}`,           // 813.813.7825
+      ];
+    };
+    const allVariants = [];
+    for (const k of convPhoneKeys) allVariants.push(...variantsForKey(k));
+
+    let clinicians = [];
+    // Supabase URL length cap on .in() — chunk in groups of 200 variants.
+    for (let i = 0; i < allVariants.length; i += 200) {
+      const slice = allVariants.slice(i, i + 200);
+      const { data } = await supabase
+        .from('clinicians')
+        .select('first_name,last_name,phone,email,do_not_text')
+        .in('phone', slice);
+      if (data) clinicians.push(...data);
+    }
+
     const nameMap = new Map();
     const optOutMap = new Map();
-    if (clinicians) {
-      for (const c of clinicians) {
-        const key = (c.phone || '').replace(/[^0-9]/g, '');
-        nameMap.set(key, ((c.first_name || '') + ' ' + (c.last_name || '')).trim());
-        if (c.do_not_text || c.sms_opt_out) optOutMap.set(key, true);
-      }
+    for (const c of clinicians) {
+      const key = digitsKey(c.phone);
+      if (!key) continue;
+      const name = ((c.first_name || '') + ' ' + (c.last_name || '')).trim();
+      if (name) nameMap.set(key, name);
+      if (c.do_not_text) optOutMap.set(key, true);
     }
 
     const conversations = Array.from(convMap.values())
       .map((conv) => {
-        const phoneKey = conv.contact_number.replace('+1', '').replace('+', '');
+        const phoneKey = digitsKey(conv.contact_number);
         return {
           ...conv,
           contact_name: nameMap.get(phoneKey) || null,
