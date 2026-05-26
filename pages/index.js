@@ -265,6 +265,7 @@ export default function SMSHub() {
   const [showTemplates, setShowTemplates] = useState(false);
   const [attachments, setAttachments] = useState([]);
   const [unreadOnly, setUnreadOnly] = useState(false);
+  const [view, setView] = useState('inbox'); // 'inbox' | 'opted_out'
   const [kbIndex, setKbIndex] = useState(-1);
   const endRef = useRef(null);
   const inputRef = useRef(null);
@@ -366,7 +367,15 @@ export default function SMSHub() {
 
   // --------- derived state ----------
 
+  // Opt-outs live in a separate folder. In the main inbox we hide them by
+  // default; the "Opted out" folder shows only them.
+  const optedOutCount = convs.filter((c) => c.opted_out).length;
   const filtered = convs.filter((c) => {
+    if (view === 'opted_out') {
+      if (!c.opted_out) return false;
+    } else {
+      if (c.opted_out) return false;
+    }
     if (tab !== 'all' && c.line_id !== tab) return false;
     if (unreadOnly && c.unread_count === 0) return false;
     if (!search) return true;
@@ -433,7 +442,7 @@ export default function SMSHub() {
   useEffect(() => { if (active && inputRef.current) setTimeout(() => inputRef.current.focus(), 100); }, [active]);
 
   // Reset the keyboard-nav cursor when the filter/search/tab changes the list.
-  useEffect(() => { setKbIndex(-1); }, [search, tab, unreadOnly]);
+  useEffect(() => { setKbIndex(-1); }, [search, tab, unreadOnly, view]);
 
   // --------- send (optimistic) ----------
 
@@ -682,18 +691,43 @@ export default function SMSHub() {
               padding: '8px 16px', display: 'flex', gap: 8, alignItems: 'center',
               borderBottom: '1px solid var(--border)',
               background: 'var(--bg-primary)',
+              flexWrap: 'wrap',
             }}>
-              <button onClick={() => setUnreadOnly((v) => !v)} style={{
-                background: unreadOnly ? 'var(--accent)' : 'var(--bg-tertiary)',
-                color: unreadOnly ? '#000' : 'var(--text-secondary)',
-                border: '1px solid ' + (unreadOnly ? 'var(--accent)' : 'var(--border-light)'),
-                borderRadius: 999, padding: '4px 10px', fontSize: 11,
-                fontWeight: 600, cursor: 'pointer',
-              }}>
-                {unreadOnly ? '● Unread only' : 'Unread only'}
-              </button>
+              {view === 'opted_out' ? (
+                <button onClick={() => { setView('inbox'); setActive(null); }} style={{
+                  background: 'var(--bg-tertiary)',
+                  color: 'var(--text-secondary)',
+                  border: '1px solid var(--border-light)',
+                  borderRadius: 999, padding: '4px 10px', fontSize: 11,
+                  fontWeight: 600, cursor: 'pointer',
+                }} title="Return to main inbox">
+                  ← Back to inbox
+                </button>
+              ) : (
+                <button onClick={() => setUnreadOnly((v) => !v)} style={{
+                  background: unreadOnly ? 'var(--accent)' : 'var(--bg-tertiary)',
+                  color: unreadOnly ? '#000' : 'var(--text-secondary)',
+                  border: '1px solid ' + (unreadOnly ? 'var(--accent)' : 'var(--border-light)'),
+                  borderRadius: 999, padding: '4px 10px', fontSize: 11,
+                  fontWeight: 600, cursor: 'pointer',
+                }}>
+                  {unreadOnly ? '● Unread only' : 'Unread only'}
+                </button>
+              )}
+              {view === 'inbox' && optedOutCount > 0 && (
+                <button onClick={() => { setView('opted_out'); setActive(null); }} style={{
+                  background: 'var(--bg-tertiary)',
+                  color: 'var(--text-secondary)',
+                  border: '1px solid var(--border-light)',
+                  borderRadius: 999, padding: '4px 10px', fontSize: 11,
+                  fontWeight: 600, cursor: 'pointer',
+                }} title="View conversations from numbers that have opted out">
+                  📭 Opted out · {optedOutCount}
+                </button>
+              )}
               <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
                 {filtered.length} shown
+                {view === 'opted_out' && ' (opt-outs only)'}
               </span>
             </div>
             <div style={{ flex: 1, overflowY: 'auto' }}>

@@ -46,22 +46,32 @@ export default async function handler(req, res) {
     const cleanNumbers = Array.from(
       new Set(Array.from(convMap.values()).map((c) => c.contact_number.replace('+1', '').replace('+', '')))
     );
+    // Pull names + opt-out flags in a single query so we can flag conversations
+    // belonging to numbers that have asked to stop. Either flag puts them in
+    // the "Opted out" folder.
     const { data: clinicians } = await supabase
       .from('clinicians')
-      .select('first_name,last_name,phone,email')
+      .select('first_name,last_name,phone,email,do_not_text,sms_opt_out')
       .in('phone', cleanNumbers);
     const nameMap = new Map();
+    const optOutMap = new Map();
     if (clinicians) {
       for (const c of clinicians) {
-        nameMap.set((c.phone || '').replace(/[^0-9]/g, ''), ((c.first_name || '') + ' ' + (c.last_name || '')).trim());
+        const key = (c.phone || '').replace(/[^0-9]/g, '');
+        nameMap.set(key, ((c.first_name || '') + ' ' + (c.last_name || '')).trim());
+        if (c.do_not_text || c.sms_opt_out) optOutMap.set(key, true);
       }
     }
 
     const conversations = Array.from(convMap.values())
-      .map((conv) => ({
-        ...conv,
-        contact_name: nameMap.get(conv.contact_number.replace('+1', '').replace('+', '')) || null,
-      }))
+      .map((conv) => {
+        const phoneKey = conv.contact_number.replace('+1', '').replace('+', '');
+        return {
+          ...conv,
+          contact_name: nameMap.get(phoneKey) || null,
+          opted_out: optOutMap.get(phoneKey) === true,
+        };
+      })
       .sort((a, b) => new Date(b.last_message_at) - new Date(a.last_message_at));
 
     res.status(200).json({ conversations });
