@@ -322,7 +322,22 @@ export default function SMSHub() {
   const [showTemplates, setShowTemplates] = useState(false);
   const [attachments, setAttachments] = useState([]);
   const [unreadOnly, setUnreadOnly] = useState(false);
-  const [view, setView] = useState('inbox'); // 'inbox' | 'opted_out'
+  const [view, setView] = useState('inbox'); // 'inbox' | 'opted_out' | 'archive'
+  // Archive state lives in localStorage so it persists without a DB migration.
+  // Stored as an array of conv keys ("lineId:contactNumber"); we hydrate into
+  // a Set for O(1) lookups.
+  const [archivedKeys, setArchivedKeys] = useState(() => {
+    if (typeof window === 'undefined') return new Set();
+    try {
+      const raw = window.localStorage.getItem('adex_sms_archived_v1');
+      return new Set(raw ? JSON.parse(raw) : []);
+    } catch { return new Set(); }
+  });
+  const persistArchive = useCallback((next) => {
+    try {
+      window.localStorage.setItem('adex_sms_archived_v1', JSON.stringify(Array.from(next)));
+    } catch {}
+  }, []);
   const [kbIndex, setKbIndex] = useState(-1);
   const endRef = useRef(null);
   const inputRef = useRef(null);
@@ -424,14 +439,18 @@ export default function SMSHub() {
 
   // --------- derived state ----------
 
-  // Opt-outs live in a separate folder. In the main inbox we hide them by
-  // default; the "Opted out" folder shows only them.
-  const optedOutCount = convs.filter((c) => c.opted_out).length;
+  // Opt-outs and archived conversations each live in their own folder. Main
+  // inbox hides both by default; each folder view shows only its own.
+  const optedOutCount = convs.filter((c) => c.opted_out && !archivedKeys.has(c.key)).length;
+  const archivedCount = convs.filter((c) => archivedKeys.has(c.key)).length;
   const filtered = convs.filter((c) => {
+    const isArchived = archivedKeys.has(c.key);
     if (view === 'opted_out') {
-      if (!c.opted_out) return false;
-    } else {
-      if (c.opted_out) return false;
+      if (!c.opted_out || isArchived) return false;
+    } else if (view === 'archive') {
+      if (!isArchived) return false;
+    } else { // 'inbox'
+      if (c.opted_out || isArchived) return false;
     }
     if (tab !== 'all' && c.line_id !== tab) return false;
     if (unreadOnly && c.unread_count === 0) return false;
@@ -612,6 +631,32 @@ export default function SMSHub() {
     } catch {}
     router.replace('/login');
   };
+
+  // Archive helpers — pure client-side, no API. Archive state lives in
+  // localStorage via persistArchive. Archived convs are hidden from the main
+  // inbox but still readable in the Archive folder.
+  const archiveMany = useCallback((convsToArchive) => {
+    if (!convsToArchive.length) return;
+    setArchivedKeys((prev) => {
+      const next = new Set(prev);
+      for (const c of convsToArchive) next.add(c.key);
+      persistArchive(next);
+      return next;
+    });
+    if (active && convsToArchive.some((c) => c.contact_number === active.contact && c.line_id === active.line)) {
+      setActive(null);
+    }
+  }, [active, persistArchive]);
+
+  const unarchiveMany = useCallback((convsToRestore) => {
+    if (!convsToRestore.length) return;
+    setArchivedKeys((prev) => {
+      const next = new Set(prev);
+      for (const c of convsToRestore) next.delete(c.key);
+      persistArchive(next);
+      return next;
+    });
+  }, [persistArchive]);
 
   // Bulk-delete a list of conversations in one API call. Used by the
   // "Delete all opted-out" button in the Opted out folder.
@@ -804,7 +849,7 @@ export default function SMSHub() {
               background: 'var(--bg-primary)',
               flexWrap: 'wrap',
             }}>
-              {view === 'opted_out' ? (
+              {(view === 'opted_out' || view === 'archive') ? (
                 <>
                   <button onClick={() => { setView('inbox'); setActive(null); }} style={{
                     background: 'var(--bg-tertiary)',
@@ -815,7 +860,7 @@ export default function SMSHub() {
                   }} title="Return to main inbox">
                     ← Back to inbox
                   </button>
-                  {filtered.length > 0 && (
+                  {view === 'opted_out' && filtered.length > 0 && (
                     <button onClick={() => {
                       const n = filtered.length;
                       if (window.confirm(
@@ -836,17 +881,50 @@ export default function SMSHub() {
                       🗑 Delete all {filtered.length}
                     </button>
                   )}
+                  {view === 'archive' && filtered.length > 0 && (
+                    <button onClick={() => unarchiveMany(filtered)} style={{
+                      background: 'var(--bg-tertiary)',
+                      color: 'var(--text-secondary)',
+                      border: '1px solid var(--border-light)',
+                      borderRadius: 999, padding: '4px 10px', fontSize: 11,
+                      fontWeight: 600, cursor: 'pointer',
+                    }} title="Move all archived conversations back to the inbox">
+                      📥 Restore all {filtered.length}
+                    </button>
+                  )}
                 </>
               ) : (
-                <button onClick={() => setUnreadOnly((v) => !v)} style={{
-                  background: unreadOnly ? 'var(--accent)' : 'var(--bg-tertiary)',
-                  color: unreadOnly ? '#000' : 'var(--text-secondary)',
-                  border: '1px solid ' + (unreadOnly ? 'var(--accent)' : 'var(--border-light)'),
-                  borderRadius: 999, padding: '4px 10px', fontSize: 11,
-                  fontWeight: 600, cursor: 'pointer',
-                }}>
-                  {unreadOnly ? '● Unread only' : 'Unread only'}
-                </button>
+                <>
+                  <button onClick={() => setUnreadOnly((v) => !v)} style={{
+                    background: unreadOnly ? 'var(--accent)' : 'var(--bg-tertiary)',
+                    color: unreadOnly ? '#000' : 'var(--text-secondary)',
+                    border: '1px solid ' + (unreadOnly ? 'var(--accent)' : 'var(--border-light)'),
+                    borderRadius: 999, padding: '4px 10px', fontSize: 11,
+                    fontWeight: 600, cursor: 'pointer',
+                  }}>
+                    {unreadOnly ? '● Unread only' : 'Unread only'}
+                  </button>
+                  {filtered.length > 0 && (
+                    <button onClick={() => {
+                      const n = filtered.length;
+                      if (window.confirm(
+                        `Move all ${n} visible inbox conversations into the Archive folder?\n\n` +
+                        `They'll be hidden from the main inbox but still readable in 📁 Archive. ` +
+                        `Nothing is deleted — you can restore them anytime.`
+                      )) {
+                        archiveMany(filtered);
+                      }
+                    }} style={{
+                      background: 'var(--bg-tertiary)',
+                      color: 'var(--text-secondary)',
+                      border: '1px solid var(--border-light)',
+                      borderRadius: 999, padding: '4px 10px', fontSize: 11,
+                      fontWeight: 600, cursor: 'pointer',
+                    }} title="Move every conversation currently visible in the inbox into the Archive folder">
+                      📁 Archive all {filtered.length}
+                    </button>
+                  )}
+                </>
               )}
               {view === 'inbox' && optedOutCount > 0 && (
                 <button onClick={() => { setView('opted_out'); setActive(null); }} style={{
@@ -859,9 +937,21 @@ export default function SMSHub() {
                   📭 Opted out · {optedOutCount}
                 </button>
               )}
+              {view === 'inbox' && archivedCount > 0 && (
+                <button onClick={() => { setView('archive'); setActive(null); }} style={{
+                  background: 'var(--bg-tertiary)',
+                  color: 'var(--text-secondary)',
+                  border: '1px solid var(--border-light)',
+                  borderRadius: 999, padding: '4px 10px', fontSize: 11,
+                  fontWeight: 600, cursor: 'pointer',
+                }} title="View archived conversations">
+                  📁 Archive · {archivedCount}
+                </button>
+              )}
               <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
                 {filtered.length} shown
                 {view === 'opted_out' && ' (opt-outs only)'}
+                {view === 'archive' && ' (archived only)'}
               </span>
             </div>
             <div style={{ flex: 1, overflowY: 'auto' }}>
