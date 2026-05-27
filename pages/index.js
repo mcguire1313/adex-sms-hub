@@ -557,26 +557,40 @@ export default function SMSHub() {
   // Reset the keyboard-nav cursor when the filter/search/tab changes the list.
   useEffect(() => { setKbIndex(-1); }, [search, tab, unreadOnly, view]);
 
-  // Play a sound when a new inbound message lands in an inbox-eligible
-  // conversation (i.e. NOT opted out and NOT archived). The first populated
-  // snapshot establishes a baseline silently.
+  // When polling discovers new inbound messages:
+  //   • If the conversation is archived → auto-unarchive it (so it shows up
+  //     in the inbox again). Treat it like a regular inbox arrival → chirp.
+  //   • If the conversation is opted out → stay silent and leave it in the
+  //     opt-out folder (we don't want STOP-ers ringing back in).
+  //   • Otherwise → just chirp.
+  // The first populated snapshot establishes a baseline silently.
   useEffect(() => {
     if (!convs.length) return;
     const prev = prevConvSnapshotRef.current;
     const nextSnap = new Map(convs.map((c) => [c.key, c.total_messages]));
     if (prev) {
+      const toUnarchive = [];
+      let shouldChirp = false;
       for (const c of convs) {
-        if (c.opted_out) continue;
-        if (archivedKeys.has(c.key)) continue;
         const before = prev.get(c.key) || 0;
-        if (c.total_messages > before && c.last_direction === 'inbound') {
-          playNewMessageSound();
-          break; // one chirp per tick is plenty
-        }
+        const newInbound = c.total_messages > before && c.last_direction === 'inbound';
+        if (!newInbound) continue;
+        if (c.opted_out) continue;
+        if (archivedKeys.has(c.key)) toUnarchive.push(c);
+        shouldChirp = true;
       }
+      if (toUnarchive.length) {
+        setArchivedKeys((prevSet) => {
+          const next = new Set(prevSet);
+          for (const c of toUnarchive) next.delete(c.key);
+          persistArchive(next);
+          return next;
+        });
+      }
+      if (shouldChirp) playNewMessageSound();
     }
     prevConvSnapshotRef.current = nextSnap;
-  }, [convs, archivedKeys, playNewMessageSound]);
+  }, [convs, archivedKeys, playNewMessageSound, persistArchive]);
 
   // --------- send (optimistic) ----------
 
