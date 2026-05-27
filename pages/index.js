@@ -603,6 +603,34 @@ export default function SMSHub() {
     router.replace('/login');
   };
 
+  // Bulk-delete a list of conversations in one API call. Used by the
+  // "Delete all opted-out" button in the Opted out folder.
+  const deleteManyConvs = useCallback(async (convsToDelete) => {
+    if (!convsToDelete.length) return;
+    const keys = new Set(convsToDelete.map((c) => c.key));
+    setConvs((prev) => prev.filter((c) => !keys.has(c.key)));
+    if (active && convsToDelete.some((c) => c.contact_number === active.contact && c.line_id === active.line)) {
+      setActive(null);
+    }
+    try {
+      const r = await fetch('/api/sms/delete-many', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pairs: convsToDelete.map((c) => ({ contact: c.contact_number, line: c.line_id })),
+        }),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        alert(`Bulk delete failed: ${err.error || r.status}`);
+      }
+    } catch (e) {
+      alert(`Bulk delete failed: ${e.message}`);
+    } finally {
+      fetchConvs();
+    }
+  }, [active, fetchConvs]);
+
   // Hard-delete a conversation (all its sms_messages rows). The ✕ button on
   // each ConvItem calls this after a confirm() prompt.
   const deleteConv = useCallback(async (conv) => {
@@ -767,15 +795,38 @@ export default function SMSHub() {
               flexWrap: 'wrap',
             }}>
               {view === 'opted_out' ? (
-                <button onClick={() => { setView('inbox'); setActive(null); }} style={{
-                  background: 'var(--bg-tertiary)',
-                  color: 'var(--text-secondary)',
-                  border: '1px solid var(--border-light)',
-                  borderRadius: 999, padding: '4px 10px', fontSize: 11,
-                  fontWeight: 600, cursor: 'pointer',
-                }} title="Return to main inbox">
-                  ← Back to inbox
-                </button>
+                <>
+                  <button onClick={() => { setView('inbox'); setActive(null); }} style={{
+                    background: 'var(--bg-tertiary)',
+                    color: 'var(--text-secondary)',
+                    border: '1px solid var(--border-light)',
+                    borderRadius: 999, padding: '4px 10px', fontSize: 11,
+                    fontWeight: 600, cursor: 'pointer',
+                  }} title="Return to main inbox">
+                    ← Back to inbox
+                  </button>
+                  {filtered.length > 0 && (
+                    <button onClick={() => {
+                      const n = filtered.length;
+                      if (window.confirm(
+                        `Permanently delete all ${n} opted-out conversations?\n\n` +
+                        `This removes every message in these threads from the database. ` +
+                        `It will NOT change opt-out flags on the contacts themselves — ` +
+                        `they'll stay opted out and won't be texted again. Cannot be undone.`
+                      )) {
+                        deleteManyConvs(filtered);
+                      }
+                    }} style={{
+                      background: 'rgba(239, 68, 68, 0.12)',
+                      color: '#ef4444',
+                      border: '1px solid rgba(239, 68, 68, 0.4)',
+                      borderRadius: 999, padding: '4px 10px', fontSize: 11,
+                      fontWeight: 600, cursor: 'pointer',
+                    }} title="Hard-delete every conversation currently in the Opted out folder">
+                      🗑 Delete all {filtered.length}
+                    </button>
+                  )}
+                </>
               ) : (
                 <button onClick={() => setUnreadOnly((v) => !v)} style={{
                   background: unreadOnly ? 'var(--accent)' : 'var(--bg-tertiary)',
