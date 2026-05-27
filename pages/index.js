@@ -339,10 +339,47 @@ export default function SMSHub() {
     } catch {}
   }, []);
   const [kbIndex, setKbIndex] = useState(-1);
+  const [soundOn, setSoundOn] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    try { return window.localStorage.getItem('adex_sms_sound') !== 'off'; } catch { return true; }
+  });
   const endRef = useRef(null);
   const inputRef = useRef(null);
   const searchRef = useRef(null);
   const lastMessageAtRef = useRef(null); // ISO of newest message we've seen in current thread
+  // Tracks total messages per conv on the previous fetchConvs tick so we can
+  // detect when a new inbound has landed AND the conversation belongs in the
+  // main inbox (not opt-out, not archive). Initially null so the first
+  // populated tick establishes the baseline without playing a sound.
+  const prevConvSnapshotRef = useRef(null);
+  const audioCtxRef = useRef(null);
+
+  const playNewMessageSound = useCallback(() => {
+    if (!soundOn || typeof window === 'undefined') return;
+    try {
+      if (!audioCtxRef.current) {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return;
+        audioCtxRef.current = new Ctx();
+      }
+      const ctx = audioCtxRef.current;
+      // Distinctive two-note chirp: B5 (988Hz) → E6 (1319Hz), ~140ms total.
+      // Sine wave with a gentle attack/release so it doesn't click.
+      const now = ctx.currentTime;
+      [{ f: 988, t: 0 }, { f: 1319, t: 0.07 }].forEach(({ f, t }) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = f;
+        gain.gain.setValueAtTime(0, now + t);
+        gain.gain.linearRampToValueAtTime(0.18, now + t + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + t + 0.09);
+        osc.connect(gain).connect(ctx.destination);
+        osc.start(now + t);
+        osc.stop(now + t + 0.1);
+      });
+    } catch (e) { /* audio is best-effort */ }
+  }, [soundOn]);
 
   // --------- data fetchers ----------
 
@@ -519,6 +556,27 @@ export default function SMSHub() {
 
   // Reset the keyboard-nav cursor when the filter/search/tab changes the list.
   useEffect(() => { setKbIndex(-1); }, [search, tab, unreadOnly, view]);
+
+  // Play a sound when a new inbound message lands in an inbox-eligible
+  // conversation (i.e. NOT opted out and NOT archived). The first populated
+  // snapshot establishes a baseline silently.
+  useEffect(() => {
+    if (!convs.length) return;
+    const prev = prevConvSnapshotRef.current;
+    const nextSnap = new Map(convs.map((c) => [c.key, c.total_messages]));
+    if (prev) {
+      for (const c of convs) {
+        if (c.opted_out) continue;
+        if (archivedKeys.has(c.key)) continue;
+        const before = prev.get(c.key) || 0;
+        if (c.total_messages > before && c.last_direction === 'inbound') {
+          playNewMessageSound();
+          break; // one chirp per tick is plenty
+        }
+      }
+    }
+    prevConvSnapshotRef.current = nextSnap;
+  }, [convs, archivedKeys, playNewMessageSound]);
 
   // --------- send (optimistic) ----------
 
@@ -778,6 +836,36 @@ export default function SMSHub() {
                     borderRadius: 8, padding: '8px 10px', fontSize: 12,
                     cursor: 'pointer',
                   }}>⊘</button>
+                  <button
+                    onClick={() => {
+                      setSoundOn((v) => {
+                        const next = !v;
+                        try { window.localStorage.setItem('adex_sms_sound', next ? 'on' : 'off'); } catch {}
+                        // Resume audio context on user gesture if needed, then chirp once
+                        // so the user hears what they just turned on.
+                        if (next) {
+                          try {
+                            if (!audioCtxRef.current) {
+                              const Ctx = window.AudioContext || window.webkitAudioContext;
+                              if (Ctx) audioCtxRef.current = new Ctx();
+                            }
+                            if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
+                              audioCtxRef.current.resume();
+                            }
+                          } catch {}
+                          setTimeout(playNewMessageSound, 50);
+                        }
+                        return next;
+                      });
+                    }}
+                    title={soundOn ? 'New-message sound is on (click to mute)' : 'New-message sound is muted (click to unmute)'}
+                    style={{
+                      background: 'transparent',
+                      color: soundOn ? 'var(--accent)' : 'var(--text-muted)',
+                      border: '1px solid var(--border-light)',
+                      borderRadius: 8, padding: '8px 10px', fontSize: 12,
+                      cursor: 'pointer',
+                    }}>{soundOn ? '🔔' : '🔕'}</button>
                   <button onClick={handleLogout} title="Sign out" style={{
                     background: 'transparent', color: 'var(--text-muted)',
                     border: '1px solid var(--border-light)',
