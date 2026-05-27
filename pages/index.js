@@ -116,17 +116,27 @@ function TabButton({ label, color, count, unread, active, onClick }) {
   );
 }
 
+const DELETE_ACK_KEY = 'adex_sms_delete_ack_v1';
+
 function ConvItem({ conv, isActive, onClick, onDelete }) {
   const u = conv.unread_count > 0;
   const handleDeleteClick = (e) => {
     e.stopPropagation();
-    const who = conv.contact_name || formatPhone(conv.contact_number);
-    if (window.confirm(
-      `Delete the entire conversation with ${who}?\n\n` +
-      `${conv.total_messages} message${conv.total_messages === 1 ? '' : 's'} will be permanently removed. This cannot be undone.`
-    )) {
-      onDelete(conv);
+    // First time the user deletes a row, show a one-time agreement explaining
+    // the action is permanent. After they accept, deletes are one-click.
+    let acknowledged = false;
+    try { acknowledged = localStorage.getItem(DELETE_ACK_KEY) === 'true'; } catch {}
+    if (!acknowledged) {
+      const ok = window.confirm(
+        'Heads up — deleting a conversation permanently removes every ' +
+        'message in it from the database. This cannot be undone.\n\n' +
+        'Click OK to delete this conversation. You won\'t be asked again ' +
+        'for future deletions.'
+      );
+      if (!ok) return;
+      try { localStorage.setItem(DELETE_ACK_KEY, 'true'); } catch {}
     }
+    onDelete(conv);
   };
   return (
     <div onClick={onClick} style={{
