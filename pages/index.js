@@ -372,7 +372,7 @@ export default function SMSHub() {
         osc.type = 'sine';
         osc.frequency.value = f;
         gain.gain.setValueAtTime(0, now + t);
-        gain.gain.linearRampToValueAtTime(0.18, now + t + 0.01);
+        gain.gain.linearRampToValueAtTime(0.55, now + t + 0.01);
         gain.gain.exponentialRampToValueAtTime(0.001, now + t + 0.09);
         osc.connect(gain).connect(ctx.destination);
         osc.start(now + t);
