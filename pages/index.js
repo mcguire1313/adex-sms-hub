@@ -116,8 +116,18 @@ function TabButton({ label, color, count, unread, active, onClick }) {
   );
 }
 
-function ConvItem({ conv, isActive, onClick }) {
+function ConvItem({ conv, isActive, onClick, onDelete }) {
   const u = conv.unread_count > 0;
+  const handleDeleteClick = (e) => {
+    e.stopPropagation();
+    const who = conv.contact_name || formatPhone(conv.contact_number);
+    if (window.confirm(
+      `Delete the entire conversation with ${who}?\n\n` +
+      `${conv.total_messages} message${conv.total_messages === 1 ? '' : 's'} will be permanently removed. This cannot be undone.`
+    )) {
+      onDelete(conv);
+    }
+  };
   return (
     <div onClick={onClick} style={{
       display: 'flex', alignItems: 'center', gap: 12,
@@ -126,9 +136,18 @@ function ConvItem({ conv, isActive, onClick }) {
       borderBottom: '1px solid var(--border)',
       borderLeft: isActive ? `3px solid ${conv.line_color}` : '3px solid transparent',
       transition: 'background 0.12s',
+      position: 'relative',
     }}
-    onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = 'var(--bg-hover)'; }}
-    onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.background = 'transparent'; }}>
+    onMouseEnter={(e) => {
+      if (!isActive) e.currentTarget.style.background = 'var(--bg-hover)';
+      const btn = e.currentTarget.querySelector('[data-delete-btn]');
+      if (btn) btn.style.opacity = '1';
+    }}
+    onMouseLeave={(e) => {
+      if (!isActive) e.currentTarget.style.background = 'transparent';
+      const btn = e.currentTarget.querySelector('[data-delete-btn]');
+      if (btn) btn.style.opacity = '0';
+    }}>
       <div style={{
         width: 42, height: 42, borderRadius: '50%', flexShrink: 0,
         background: u ? conv.line_color : 'var(--bg-tertiary)',
@@ -180,6 +199,34 @@ function ConvItem({ conv, isActive, onClick }) {
           )}
         </div>
       </div>
+      <button
+        data-delete-btn
+        onClick={handleDeleteClick}
+        title="Delete this conversation (cannot be undone)"
+        style={{
+          opacity: 0,
+          transition: 'opacity 0.12s, background 0.12s',
+          background: 'transparent',
+          border: '1px solid var(--border-light)',
+          color: 'var(--text-muted)',
+          borderRadius: 6,
+          width: 28, height: 28,
+          fontSize: 14, lineHeight: 1,
+          cursor: 'pointer',
+          flexShrink: 0,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background = 'rgba(239, 68, 68, 0.15)';
+          e.currentTarget.style.color = '#ef4444';
+          e.currentTarget.style.borderColor = '#ef4444';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = 'transparent';
+          e.currentTarget.style.color = 'var(--text-muted)';
+          e.currentTarget.style.borderColor = 'var(--border-light)';
+        }}
+      >✕</button>
     </div>
   );
 }
@@ -556,6 +603,32 @@ export default function SMSHub() {
     router.replace('/login');
   };
 
+  // Hard-delete a conversation (all its sms_messages rows). The ✕ button on
+  // each ConvItem calls this after a confirm() prompt.
+  const deleteConv = useCallback(async (conv) => {
+    // Optimistically remove from the inbox so it doesn't sit there during the
+    // network round-trip. fetchConvs() at the end re-syncs from the server.
+    setConvs((prev) => prev.filter((c) => c.key !== conv.key));
+    if (active && active.contact === conv.contact_number && active.line === conv.line_id) {
+      setActive(null);
+    }
+    try {
+      const r = await fetch('/api/sms/delete-thread', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contact: conv.contact_number, line: conv.line_id }),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        alert(`Could not delete: ${err.error || r.status}`);
+      }
+    } catch (e) {
+      alert(`Could not delete: ${e.message}`);
+    } finally {
+      fetchConvs();
+    }
+  }, [active, fetchConvs]);
+
 
   const totals = LINES.reduce((acc, l) => {
     const lineConvs = convs.filter((c) => c.line_id === l.id);
@@ -746,7 +819,8 @@ export default function SMSHub() {
                 }}>
                   <ConvItem conv={c}
                     isActive={active?.contact === c.contact_number && active?.line === c.line_id}
-                    onClick={() => setActive({ contact: c.contact_number, line: c.line_id })} />
+                    onClick={() => setActive({ contact: c.contact_number, line: c.line_id })}
+                    onDelete={deleteConv} />
                 </div>
               ))}
             </div>
