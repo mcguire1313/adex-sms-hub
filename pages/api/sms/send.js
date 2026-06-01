@@ -60,7 +60,7 @@ export default async function handler(req, res) {
       const j = await r.json().catch(() => ({}));
       if (!r.ok) {
         console.error('Quo send failed:', r.status, j);
-        return res.status(r.status).json({ error: j.message || j.error || `Quo API error ${r.status}` });
+        return res.status(502).json({ error: `Quo/OpenPhone error ${r.status}: ${j.message || j.error || 'request rejected'}` });
       }
       const m = j.data || j;
       externalSid = m.id || null;
