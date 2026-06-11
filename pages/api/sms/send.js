@@ -35,19 +35,22 @@ export default async function handler(req, res) {
     let externalSid = null;
     let status = 'queued';
 
-    if (line.id === 'twilio') {
+    if (line.id !== 'quo') {
+      // Any Twilio line (813/770/412/402/470/727/706/724) — send from the SELECTED
+      // number, not the Messaging Service pool, so the manual message goes out on
+      // the same line the conversation is on.
       const twilio = require('twilio');
       const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
       const payload = {
         body,
-        messagingServiceSid: process.env.TWILIO_MESSAGING_SERVICE_SID,
+        from: line.number,
         to,
       };
       if (hasMedia) payload.mediaUrl = mediaUrls;
       const message = await client.messages.create(payload);
       externalSid = message.sid;
       status = message.status;
-    } else if (line.id === 'quo') {
+    } else {
       const apiKey = process.env.QUO_API_KEY;
       if (!apiKey) return res.status(500).json({ error: 'QUO_API_KEY not configured' });
       const payload = { content: body, from: line.number, to: [to] };
@@ -65,8 +68,6 @@ export default async function handler(req, res) {
       const m = j.data || j;
       externalSid = m.id || null;
       status = m.status || 'queued';
-    } else {
-      return res.status(400).json({ error: 'Unknown line' });
     }
 
     // Build media_urls in the same shape as inbound rows so the UI renderer
