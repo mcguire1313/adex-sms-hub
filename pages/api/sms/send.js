@@ -31,6 +31,27 @@ export default async function handler(req, res) {
   const line = lineById(lineId);
   if (!line) return res.status(400).json({ error: 'Invalid line' });
 
+  // DNC GUARD — never let a manual send reach a number that has opted out /
+  // been placed on do-not-contact (e.g. a legal / FTC removal demand). This is
+  // the one path the automated suppression doesn't cover. Fail-open only on a
+  // DB error so a transient hiccup can't brick the whole Hub.
+  try {
+    const dncClient = getServiceClient();
+    const { data: optOut } = await dncClient
+      .from('sms_opt_outs')
+      .select('phone_number, source, opted_out_at')
+      .eq('phone_number', to)
+      .limit(1);
+    if (optOut && optOut.length > 0) {
+      const o = optOut[0];
+      return res.status(403).json({
+        error: `🚫 ${to} is on the DO-NOT-CONTACT list — opted out ${(o.opted_out_at || '').slice(0, 10)} (${o.source || 'opt-out'}). Send blocked.`,
+      });
+    }
+  } catch (e) {
+    console.error('DNC guard check failed (allowing send):', e);
+  }
+
   try {
     let externalSid = null;
     let status = 'queued';
